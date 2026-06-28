@@ -21,6 +21,7 @@
 #endif
 
 #include <assert.h>
+#include <math.h>
 
 #include <stdexcept>
 
@@ -70,18 +71,20 @@ static CGImageRef create_image(CGColorSpaceRef lut,
 static void render(CGContextRef gc, CGColorSpaceRef lut,
                    const unsigned char* data,
                    CGBlendMode mode, CGFloat alpha,
+                   int img_w, int img_h,
                    int src_x, int src_y, int src_w, int src_h,
-                   int x, int y, int w, int h)
+                   CGFloat dst_x, CGFloat dst_y, CGFloat dst_w, CGFloat dst_h)
 {
   CGRect rect;
   CGImageRef image, subimage;
 
-  image = create_image(lut, data, src_w, src_h, mode == kCGBlendModeCopy);
+  image = create_image(lut, data, img_w, img_h, mode == kCGBlendModeCopy);
 
+  // Crop the requested source region (in image/source pixels)
   rect.origin.x = src_x;
   rect.origin.y = src_y;
-  rect.size.width = w;
-  rect.size.height = h;
+  rect.size.width = src_w;
+  rect.size.height = src_h;
 
   subimage = CGImageCreateWithImageInRect(image, rect);
   if (!subimage)
@@ -92,10 +95,13 @@ static void render(CGContextRef gc, CGColorSpaceRef lut,
   CGContextSetBlendMode(gc, mode);
   CGContextSetAlpha(gc, alpha);
 
-  rect.origin.x = x;
-  rect.origin.y = y;
-  rect.size.width = w;
-  rect.size.height = h;
+  // Destination rectangle (in device pixels); may differ in size from the
+  // source region on HiDPI/Retina displays, in which case the image is
+  // scaled up to fill it.
+  rect.origin.x = dst_x;
+  rect.origin.y = dst_y;
+  rect.size.width = dst_w;
+  rect.size.height = dst_h;
 
   CGContextDrawImage(gc, rect, subimage);
 
@@ -141,19 +147,33 @@ void Surface::draw(int src_x, int src_y, int dst_x, int dst_y,
                    int dst_w, int dst_h)
 {
   CGColorSpaceRef lut;
+  CGAffineTransform ctm;
+  CGFloat sx, sy;
+  CGFloat dev_x, dev_y;
 
   CGContextSaveGState(fl_gc);
 
+  // The context's current transform maps points to device pixels. On
+  // HiDPI/Retina displays this scale is >1, so capture it before we reset
+  // the matrix, otherwise we'd draw at 1:1 pixel scale and only fill a
+  // fraction of the (larger) backing store.
+  ctm = CGContextGetCTM(fl_gc);
+  sx = fabs(ctm.a);
+  sy = fabs(ctm.d);
+
   // Reset the transformation matrix back to the default identity
   // matrix as otherwise we get a massive performance hit
-  CGContextConcatCTM(fl_gc, CGAffineTransformInvert(CGContextGetCTM(fl_gc)));
+  CGContextConcatCTM(fl_gc, CGAffineTransformInvert(ctm));
 
-  // macOS Coordinates are from bottom left, not top left
-  dst_y = Fl_Window::current()->h() - (dst_y + dst_h);
+  // macOS Coordinates are from bottom left, not top left. Compute the
+  // destination in device pixels using the captured scale factors.
+  dev_x = dst_x * sx;
+  dev_y = (Fl_Window::current()->h() - (dst_y + dst_h)) * sy;
 
   lut = cocoa_win_color_space(Fl_Window::current());
   render(fl_gc, lut, data, kCGBlendModeCopy, 1.0,
-         src_x, src_y, width(), height(), dst_x, dst_y, dst_w, dst_h);
+         width(), height(), src_x, src_y, dst_w, dst_h,
+         dev_x, dev_y, dst_w * sx, dst_h * sy);
   CGColorSpaceRelease(lut);
 
   CGContextRestoreGState(fl_gc);
@@ -169,8 +189,10 @@ void Surface::draw(Surface* dst, int src_x, int src_y,
   // macOS Coordinates are from bottom left, not top left
   dst_y = dst->height() - (dst_y + dst_h);
 
+  // Drawing into an offscreen bitmap, so no HiDPI scaling involved
   render(bitmap, srgb, data, kCGBlendModeCopy, 1.0,
-         src_x, src_y, width(), height(), dst_x, dst_y, dst_w, dst_h);
+         width(), height(), src_x, src_y, dst_w, dst_h,
+         dst_x, dst_y, dst_w, dst_h);
 
   CGContextRelease(bitmap);
 }
@@ -179,19 +201,30 @@ void Surface::blend(int src_x, int src_y, int dst_x, int dst_y,
                     int dst_w, int dst_h, int a)
 {
   CGColorSpaceRef lut;
+  CGAffineTransform ctm;
+  CGFloat sx, sy;
+  CGFloat dev_x, dev_y;
 
   CGContextSaveGState(fl_gc);
 
+  // Capture the points-to-device-pixels scale before resetting the matrix
+  // (see Surface::draw() for details)
+  ctm = CGContextGetCTM(fl_gc);
+  sx = fabs(ctm.a);
+  sy = fabs(ctm.d);
+
   // Reset the transformation matrix back to the default identity
   // matrix as otherwise we get a massive performance hit
-  CGContextConcatCTM(fl_gc, CGAffineTransformInvert(CGContextGetCTM(fl_gc)));
+  CGContextConcatCTM(fl_gc, CGAffineTransformInvert(ctm));
 
   // macOS Coordinates are from bottom left, not top left
-  dst_y = Fl_Window::current()->h() - (dst_y + dst_h);
+  dev_x = dst_x * sx;
+  dev_y = (Fl_Window::current()->h() - (dst_y + dst_h)) * sy;
 
   lut = cocoa_win_color_space(Fl_Window::current());
   render(fl_gc, lut, data, kCGBlendModeNormal, (CGFloat)a/255.0,
-         src_x, src_y, width(), height(), dst_x, dst_y, dst_w, dst_h);
+         width(), height(), src_x, src_y, dst_w, dst_h,
+         dev_x, dev_y, dst_w * sx, dst_h * sy);
   CGColorSpaceRelease(lut);
 
   CGContextRestoreGState(fl_gc);
@@ -207,8 +240,10 @@ void Surface::blend(Surface* dst, int src_x, int src_y,
   // macOS Coordinates are from bottom left, not top left
   dst_y = dst->height() - (dst_y + dst_h);
 
+  // Drawing into an offscreen bitmap, so no HiDPI scaling involved
   render(bitmap, srgb, data, kCGBlendModeNormal, (CGFloat)a/255.0,
-         src_x, src_y, width(), height(), dst_x, dst_y, dst_w, dst_h);
+         width(), height(), src_x, src_y, dst_w, dst_h,
+         dst_x, dst_y, dst_w, dst_h);
 
   CGContextRelease(bitmap);
 }
