@@ -1516,6 +1516,18 @@ void DesktopWindow::applyScaling(int fb_w, int fb_h)
   viewport->size(vp_w, vp_h);
 
   repositionWidgets();
+
+#ifdef __APPLE__
+  // Constrain live window resizing to the desktop's aspect ratio so that
+  // "Keep aspect ratio" scaling never leaves letterbox/pillarbox bars.
+  // (Only valid once the native window exists.)
+  if (shown()) {
+    if (scalingMode == "Aspect")
+      cocoa_win_set_aspect(this, fb_w, fb_h);
+    else
+      cocoa_win_set_aspect(this, 0, 0);
+  }
+#endif
 }
 
 
@@ -1624,6 +1636,19 @@ void DesktopWindow::handleOptions(void *data)
 
   // The scaling mode may have changed; apply it
   if (scalingMode != "None") {
+    // For aspect-preserving scaling, snap the window to the remote
+    // desktop's aspect ratio so any existing black bars disappear.
+    if ((scalingMode == "Aspect") && !self->fullscreen_active()) {
+      int fb_w = self->cc->server.width();
+      int fb_h = self->cc->server.height();
+      if ((fb_w > 0) && (fb_h > 0)) {
+        int new_h = (int)((double)self->w() * fb_h / fb_w + 0.5);
+        if (new_h < 1)
+          new_h = 1;
+        if (new_h != self->h())
+          self->size(self->w(), new_h);
+      }
+    }
     self->applyScaling(self->cc->server.width(), self->cc->server.height());
   } else {
     // Scaling turned off: restore the viewport to the remote desktop size
@@ -1631,6 +1656,10 @@ void DesktopWindow::handleOptions(void *data)
     self->viewport->size(self->cc->server.width(),
                          self->cc->server.height());
     self->repositionWidgets();
+#ifdef __APPLE__
+    if (self->shown())
+      cocoa_win_set_aspect(self, 0, 0);
+#endif
   }
 }
 

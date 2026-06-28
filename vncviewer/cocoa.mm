@@ -270,3 +270,14 @@ void cocoa_win_zoom(Fl_Window *win)
   assert(nsw);
   [nsw zoom:nsw];
 }
+
+void cocoa_win_set_aspect(Fl_Window *win, int w, int h)
+{
+  NSWindow *nsw;
+  nsw = (NSWindow*)fl_xid(win);
+  assert(nsw);
+  if ((w > 0) && (h > 0))
+    [nsw setContentAspectRatio:NSMakeSize(w, h)];
+  else
+    [nsw setContentAspectRatio:NSMakeSize(0, 0)];
+}
