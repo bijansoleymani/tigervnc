@@ -46,6 +46,14 @@ if(APPLE)
 set(SIGN_IDENTITY "-" CACHE STRING
   "Code signing identity for the macOS app bundle (\"-\" = ad-hoc)")
 
+# Submit the resulting dmg to Apple's notary service and staple the
+# ticket. Requires a Developer ID SIGN_IDENTITY and notary credentials
+# supplied at build time via the NOTARY_PROFILE environment variable (a
+# keychain profile created with `xcrun notarytool store-credentials`).
+# Can also be toggled at build time with the NOTARIZE environment
+# variable.
+option(NOTARIZE "Notarize the macOS dmg with Apple (needs Developer ID + NOTARY_PROFILE)" OFF)
+
 configure_file(makemacapp.in makemacapp @ONLY)
 configure_file(Info.plist.in Info.plist)
 

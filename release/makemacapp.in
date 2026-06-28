@@ -82,6 +82,39 @@ if [ ! "$SIGN_IDENTITY" = "-" ]; then
 		--sign "$SIGN_IDENTITY" "$TMPDIR/$PACKAGE_NAME-$VERSION.dmg"
 fi
 
+# Optionally notarize the dmg with Apple and staple the ticket so the
+# app launches without Gatekeeper warnings on other machines. Controlled
+# by the NOTARIZE cmake option (overridable via the NOTARIZE environment
+# variable) and credentials in the NOTARY_PROFILE environment variable.
+NOTARIZE="${NOTARIZE:-@NOTARIZE@}"
+case "$NOTARIZE" in
+	1|ON|on|YES|yes|true|TRUE) NOTARIZE=1 ;;
+	*) NOTARIZE=0 ;;
+esac
+
+if [ "$NOTARIZE" = "1" ]; then
+	if [ "$SIGN_IDENTITY" = "-" ]; then
+		echo "ERROR: cannot notarize an ad-hoc signed build." >&2
+		echo "Set SIGN_IDENTITY to a Developer ID Application identity." >&2
+		exit 1
+	fi
+	if [ -z "${NOTARY_PROFILE:-}" ]; then
+		echo "ERROR: NOTARIZE is enabled but NOTARY_PROFILE is not set." >&2
+		echo "Create a credential profile once with:" >&2
+		echo "  xcrun notarytool store-credentials <profile-name> \\" >&2
+		echo "    --apple-id <email> --team-id <TEAMID> --password <app-specific-password>" >&2
+		echo "then build with NOTARY_PROFILE=<profile-name>." >&2
+		exit 1
+	fi
+
+	echo "Submitting $PACKAGE_NAME-$VERSION.dmg for notarization..."
+	xcrun notarytool submit "$TMPDIR/$PACKAGE_NAME-$VERSION.dmg" \
+		--keychain-profile "$NOTARY_PROFILE" --wait
+
+	echo "Stapling notarization ticket..."
+	xcrun stapler staple "$TMPDIR/$PACKAGE_NAME-$VERSION.dmg"
+fi
+
 cp $TMPDIR/$PACKAGE_NAME-$VERSION.dmg .
 
 exit
