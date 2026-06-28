@@ -52,21 +52,58 @@ done
 install -m 644 $SRCDIR/LICENCE.TXT $TMPDIR/dmg/
 install -m 644 $SRCDIR/README.rst $TMPDIR/dmg/
 
+# Bundle all non-system dependencies (FLTK, GnuTLS, etc.) into the app so
+# it is self-contained and runs on machines without Homebrew. dylibbundler
+# recursively copies the libraries into Contents/libs and rewrites the
+# load paths to @executable_path/../libs.
+if ! command -v dylibbundler >/dev/null 2>&1; then
+	echo "ERROR: dylibbundler not found." >&2
+	echo "Install it with: brew install dylibbundler" >&2
+	exit 1
+fi
+
+echo "Bundling dependent libraries..."
+dylibbundler --overwrite-dir --bundle-deps --create-dir \
+	--fix-file "$APPROOT/Contents/MacOS/vncviewer" \
+	--dest-dir "$APPROOT/Contents/libs" \
+	--install-path @executable_path/../libs
+
 # Code sign the app bundle. The identity is configured at cmake time via
 # SIGN_IDENTITY (default "-", i.e. ad-hoc) and may be overridden at build
 # time with the CODESIGN_IDENTITY environment variable. The hardened
 # runtime is always enabled so the same bundle can later be notarized.
+# Re-signing the bundled libraries also strips their original (foreign)
+# signatures, which would otherwise be rejected by library validation.
 SIGN_IDENTITY="${CODESIGN_IDENTITY:-@SIGN_IDENTITY@}"
+
+ENTITLEMENTS="$SRCDIR/release/vncviewer.entitlements"
+
+codesign_one()
+{
+	target="$1"
+	shift
+	if [ "$SIGN_IDENTITY" = "-" ]; then
+		codesign --force --options runtime "$@" --sign - "$target"
+	else
+		codesign --force --options runtime --timestamp "$@" \
+			--sign "$SIGN_IDENTITY" "$target"
+	fi
+}
 
 if [ "$SIGN_IDENTITY" = "-" ]; then
 	echo "Code signing $PACKAGE_NAME.app (ad-hoc)"
-	codesign --force --deep --options runtime \
-		--sign - "$APPROOT"
 else
 	echo "Code signing $PACKAGE_NAME.app with identity: $SIGN_IDENTITY"
-	codesign --force --deep --options runtime --timestamp \
-		--sign "$SIGN_IDENTITY" "$APPROOT"
 fi
+
+# Sign nested libraries first (inside-out), then the bundle itself. The
+# main executable gets the entitlements that allow the hardened runtime
+# to load the bundled (foreign-signed) libraries.
+for lib in "$APPROOT/Contents/libs"/*.dylib; do
+	[ -e "$lib" ] || continue
+	codesign_one "$lib"
+done
+codesign_one "$APPROOT" --entitlements "$ENTITLEMENTS"
 
 codesign --verify --strict --verbose=2 "$APPROOT"
 
