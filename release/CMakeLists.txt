@@ -38,7 +38,15 @@ endif() # WIN32
 
 if(APPLE)
 
-configure_file(makemacapp.in makemacapp)
+# Code signing identity for the app bundle / dmg. Defaults to "-" which
+# means ad-hoc signing (no certificate needed). Set this to a Developer ID
+# Application identity for distributable, notarizable builds. It can also
+# be overridden at build time via the CODESIGN_IDENTITY environment
+# variable without re-running cmake.
+set(SIGN_IDENTITY "-" CACHE STRING
+  "Code signing identity for the macOS app bundle (\"-\" = ad-hoc)")
+
+configure_file(makemacapp.in makemacapp @ONLY)
 configure_file(Info.plist.in Info.plist)
 
 add_custom_command(OUTPUT TigerVNC-${VERSION}.dmg
