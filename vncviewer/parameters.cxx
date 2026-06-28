@@ -189,6 +189,14 @@ core::BoolParameter
                  "size of the local client window changes"),
                true);
 
+core::EnumParameter
+  scalingMode("Scaling",
+              core::format(
+                "%s (%s)",
+                _("Scale the remote desktop to the size of the local "
+                  "window"), "None, Aspect, Fill").c_str(),
+              {"None", "Aspect", "Fill"}, "None");
+
 core::BoolParameter
   viewOnly("ViewOnly",
            _("Don't send any mouse or keyboard events to the server"),
@@ -278,6 +286,7 @@ static core::VoidParameter* parameterArray[] = {
   &fullScreen,
   &fullScreenMode,
   &fullScreenSelectedMonitors,
+  &scalingMode,
   /* Input */
   &viewOnly,
   &emulateMiddleButton,

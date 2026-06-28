@@ -188,6 +188,15 @@ void Viewport::updateWindow()
   core::Rect r;
 
   r = frameBuffer->getDamage();
+
+  if (isScaling()) {
+    // A framebuffer region maps to a scaled (and possibly fractional) area
+    // on screen, so repaint the whole viewport to avoid rounding seams.
+    if ((r.width() > 0) && (r.height() > 0))
+      damage(FL_DAMAGE_USER1, x(), y(), w(), h());
+    return;
+  }
+
   damage(FL_DAMAGE_USER1, r.tl.x + x(), r.tl.y + y(), r.width(), r.height());
 }
 
@@ -383,9 +392,53 @@ void Viewport::pushLEDState()
 }
 
 
+bool Viewport::isScaling() const
+{
+  return scalingMode != "None";
+}
+
+
+core::Point Viewport::remapPointer(int event_x, int event_y) const
+{
+  int lx, ly;
+
+  lx = event_x - x();
+  ly = event_y - y();
+
+  if (!isScaling())
+    return {lx, ly};
+
+  // Map the scaled on-screen position back to framebuffer coordinates
+  if ((w() > 0) && (h() > 0)) {
+    lx = (int)((long)lx * frameBuffer->width() / w());
+    ly = (int)((long)ly * frameBuffer->height() / h());
+  }
+
+  // Keep within the framebuffer bounds
+  if (lx < 0)
+    lx = 0;
+  else if (lx >= frameBuffer->width())
+    lx = frameBuffer->width() - 1;
+  if (ly < 0)
+    ly = 0;
+  else if (ly >= frameBuffer->height())
+    ly = frameBuffer->height() - 1;
+
+  return {lx, ly};
+}
+
+
 void Viewport::draw(Surface* dst)
 {
   int X, Y, W, H;
+
+  if (isScaling()) {
+    // Scale the entire framebuffer to fill the widget. FLTK clips the
+    // result to whatever actually needs repainting.
+    frameBuffer->draw(dst, 0, 0, frameBuffer->width(), frameBuffer->height(),
+                      x(), y(), w(), h());
+    return;
+  }
 
   // Check what actually needs updating
   fl_clip_box(x(), y(), w(), h(), X, Y, W, H);
@@ -400,6 +453,12 @@ void Viewport::draw()
 {
   int X, Y, W, H;
 
+  if (isScaling()) {
+    frameBuffer->draw(0, 0, frameBuffer->width(), frameBuffer->height(),
+                      x(), y(), w(), h());
+    return;
+  }
+
   // Check what actually needs updating
   fl_clip_box(x(), y(), w(), h(), X, Y, W, H);
   if ((W == 0) || (H == 0))
@@ -409,15 +468,34 @@ void Viewport::draw()
 }
 
 
+void Viewport::resizeFramebuffer(int fb_w, int fb_h)
+{
+  if ((fb_w == frameBuffer->width()) && (fb_h == frameBuffer->height()))
+    return;
+
+  vlog.debug("Resizing framebuffer from %dx%d to %dx%d",
+             frameBuffer->width(), frameBuffer->height(), fb_w, fb_h);
+
+  frameBuffer = new PlatformPixelBuffer(fb_w, fb_h);
+  assert(frameBuffer);
+  cc->setFramebuffer(frameBuffer);
+}
+
+
 void Viewport::resize(int x, int y, int w, int h)
 {
-  if ((w != frameBuffer->width()) || (h != frameBuffer->height())) {
-    vlog.debug("Resizing framebuffer from %dx%d to %dx%d",
-               frameBuffer->width(), frameBuffer->height(), w, h);
+  // When scaling, the widget size is decoupled from the framebuffer size:
+  // the framebuffer stays at the remote desktop resolution and is managed
+  // via resizeFramebuffer(), so don't recreate it here.
+  if (!isScaling()) {
+    if ((w != frameBuffer->width()) || (h != frameBuffer->height())) {
+      vlog.debug("Resizing framebuffer from %dx%d to %dx%d",
+                 frameBuffer->width(), frameBuffer->height(), w, h);
 
-    frameBuffer = new PlatformPixelBuffer(w, h);
-    assert(frameBuffer);
-    cc->setFramebuffer(frameBuffer);
+      frameBuffer = new PlatformPixelBuffer(w, h);
+      assert(frameBuffer);
+      cc->setFramebuffer(frameBuffer);
+    }
   }
 
   Fl_Widget::resize(x, y, w, h);
@@ -465,7 +543,7 @@ int Viewport::handle(int event)
   case FL_LEAVE:
     window()->cursor(FL_CURSOR_DEFAULT);
     // We want a last move event to help trigger edge stuff
-    handlePointerEvent({Fl::event_x() - x(), Fl::event_y() - y()}, 0);
+    handlePointerEvent(remapPointer(Fl::event_x(), Fl::event_y()), 0);
     return 1;
 
   case FL_PUSH:
@@ -508,11 +586,11 @@ int Viewport::handle(int event)
 
       // A quick press of the wheel "button", followed by a immediate
       // release below
-      handlePointerEvent({Fl::event_x() - x(), Fl::event_y() - y()},
+      handlePointerEvent(remapPointer(Fl::event_x(), Fl::event_y()),
                          buttonMask | wheelMask);
-    } 
+    }
 
-    handlePointerEvent({Fl::event_x() - x(), Fl::event_y() - y()}, buttonMask);
+    handlePointerEvent(remapPointer(Fl::event_x(), Fl::event_y()), buttonMask);
     return 1;
 
   case FL_FOCUS:

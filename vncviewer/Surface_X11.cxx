@@ -61,6 +61,55 @@ void Surface::draw(Surface* dst, int src_x, int src_y,
                    src_x, src_y, 0, 0, dst_x, dst_y, dst_w, dst_h);
 }
 
+// Scale the source region into the destination using a picture transform.
+// The transform maps destination coordinates back into the source, so the
+// scale factor is source/destination. A bilinear filter smooths the result.
+// (Callers use a zero source origin, which is unaffected by the transform.)
+static void setScaleTransform(Picture picture, int src_w, int src_h,
+                              int dst_w, int dst_h)
+{
+  XTransform xform = {{
+    { XDoubleToFixed((double)src_w / dst_w), 0, 0 },
+    { 0, XDoubleToFixed((double)src_h / dst_h), 0 },
+    { 0, 0, XDoubleToFixed(1.0) }
+  }};
+  XRenderSetPictureFilter(fl_display, picture, FilterBilinear, nullptr, 0);
+  XRenderSetPictureTransform(fl_display, picture, &xform);
+}
+
+static void resetScaleTransform(Picture picture)
+{
+  XTransform identity = {{
+    { XDoubleToFixed(1.0), 0, 0 },
+    { 0, XDoubleToFixed(1.0), 0 },
+    { 0, 0, XDoubleToFixed(1.0) }
+  }};
+  XRenderSetPictureTransform(fl_display, picture, &identity);
+  XRenderSetPictureFilter(fl_display, picture, FilterNearest, nullptr, 0);
+}
+
+void Surface::draw(int src_x, int src_y, int src_w, int src_h,
+                   int dst_x, int dst_y, int dst_w, int dst_h)
+{
+  Picture winPict;
+
+  winPict = XRenderCreatePicture(fl_display, fl_window, visFormat, 0, nullptr);
+  setScaleTransform(picture, src_w, src_h, dst_w, dst_h);
+  XRenderComposite(fl_display, PictOpSrc, picture, None, winPict,
+                   src_x, src_y, 0, 0, dst_x, dst_y, dst_w, dst_h);
+  resetScaleTransform(picture);
+  XRenderFreePicture(fl_display, winPict);
+}
+
+void Surface::draw(Surface* dst, int src_x, int src_y, int src_w, int src_h,
+                   int dst_x, int dst_y, int dst_w, int dst_h)
+{
+  setScaleTransform(picture, src_w, src_h, dst_w, dst_h);
+  XRenderComposite(fl_display, PictOpSrc, picture, None, dst->picture,
+                   src_x, src_y, 0, 0, dst_x, dst_y, dst_w, dst_h);
+  resetScaleTransform(picture);
+}
+
 static Picture alpha_mask(int a)
 {
   Pixmap pixmap;
