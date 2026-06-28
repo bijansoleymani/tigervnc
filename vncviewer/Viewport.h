@@ -49,6 +49,10 @@ public:
   // Flush updates to screen
   void updateWindow();
 
+  // (Re)create the framebuffer at the given remote desktop size. Used when
+  // scaling, where the widget size is independent of the framebuffer size.
+  void resizeFramebuffer(int fb_w, int fb_h);
+
   // New image for the locally rendered cursor
   void setCursor();
 
@@ -76,6 +80,13 @@ protected:
 
 private:
   bool hasFocus();
+
+  // True when client-side scaling is active
+  bool isScaling() const;
+
+  // Map a window-relative pointer position to framebuffer coordinates,
+  // accounting for any client-side scaling
+  core::Point remapPointer(int event_x, int event_y) const;
 
   // Show the currently set (or system) cursor
   void showCursor();

@@ -197,6 +197,55 @@ void Surface::draw(Surface* dst, int src_x, int src_y,
   CGContextRelease(bitmap);
 }
 
+void Surface::draw(int src_x, int src_y, int src_w, int src_h,
+                   int dst_x, int dst_y, int dst_w, int dst_h)
+{
+  CGColorSpaceRef lut;
+  CGAffineTransform ctm;
+  CGFloat sx, sy;
+  CGFloat dev_x, dev_y;
+
+  CGContextSaveGState(fl_gc);
+
+  // Capture the points-to-device-pixels scale before resetting the matrix
+  // (see the non-scaling Surface::draw() for details)
+  ctm = CGContextGetCTM(fl_gc);
+  sx = fabs(ctm.a);
+  sy = fabs(ctm.d);
+
+  CGContextConcatCTM(fl_gc, CGAffineTransformInvert(ctm));
+
+  dev_x = dst_x * sx;
+  dev_y = (Fl_Window::current()->h() - (dst_y + dst_h)) * sy;
+
+  // The source region (src_w x src_h) is scaled to fill the destination,
+  // which CoreGraphics does for us when the rects differ in size.
+  lut = cocoa_win_color_space(Fl_Window::current());
+  render(fl_gc, lut, data, kCGBlendModeCopy, 1.0,
+         width(), height(), src_x, src_y, src_w, src_h,
+         dev_x, dev_y, dst_w * sx, dst_h * sy);
+  CGColorSpaceRelease(lut);
+
+  CGContextRestoreGState(fl_gc);
+}
+
+void Surface::draw(Surface* dst, int src_x, int src_y, int src_w, int src_h,
+                   int dst_x, int dst_y, int dst_w, int dst_h)
+{
+  CGContextRef bitmap;
+
+  bitmap = make_bitmap(dst->width(), dst->height(), dst->data);
+
+  // macOS Coordinates are from bottom left, not top left
+  dst_y = dst->height() - (dst_y + dst_h);
+
+  render(bitmap, srgb, data, kCGBlendModeCopy, 1.0,
+         width(), height(), src_x, src_y, src_w, src_h,
+         dst_x, dst_y, dst_w, dst_h);
+
+  CGContextRelease(bitmap);
+}
+
 void Surface::blend(int src_x, int src_y, int dst_x, int dst_y,
                     int dst_w, int dst_h, int a)
 {

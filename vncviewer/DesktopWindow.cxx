@@ -362,6 +362,13 @@ void DesktopWindow::resizeFramebuffer(int new_w, int new_h)
 {
   bool maximized;
 
+  // When scaling, the viewport widget size is independent of the remote
+  // desktop size; just keep the framebuffer in sync and rescale.
+  if (scalingMode != "None") {
+    applyScaling(new_w, new_h);
+    return;
+  }
+
   if ((new_w == viewport->w()) && (new_h == viewport->h()))
     return;
 
@@ -417,21 +424,37 @@ void DesktopWindow::setCursor()
 
 void DesktopWindow::setCursorPos(const core::Point& pos)
 {
+  int sx, sy;
+
   if (!mouseGrabbed) {
     // Do nothing if we do not have the mouse captured.
     return;
   }
+
+  // pos is in framebuffer coordinates; map to on-screen coordinates,
+  // applying any client-side scaling
+  sx = pos.x;
+  sy = pos.y;
+  if (scalingMode != "None") {
+    int fb_w = cc->server.width();
+    int fb_h = cc->server.height();
+    if ((fb_w > 0) && (fb_h > 0)) {
+      sx = pos.x * viewport->w() / fb_w;
+      sy = pos.y * viewport->h() / fb_h;
+    }
+  }
+
 #if defined(WIN32)
-  SetCursorPos(pos.x + x_root() + viewport->x(),
-               pos.y + y_root() + viewport->y());
+  SetCursorPos(sx + x_root() + viewport->x(),
+               sy + y_root() + viewport->y());
 #elif defined(__APPLE__)
   CGPoint new_pos;
-  new_pos.x = pos.x + x_root() + viewport->x();
-  new_pos.y = pos.y + y_root() + viewport->y();
+  new_pos.x = sx + x_root() + viewport->x();
+  new_pos.y = sy + y_root() + viewport->y();
   CGWarpMouseCursorPosition(new_pos);
 #else // Assume this is Xlib
-  x11_warp_pointer(pos.x + x_root() + viewport->x(),
-                   pos.y + y_root() + viewport->y());
+  x11_warp_pointer(sx + x_root() + viewport->x(),
+                   sy + y_root() + viewport->y());
 #endif
 }
 
@@ -681,9 +704,14 @@ void DesktopWindow::resize(int x, int y, int w, int h)
   Fl_Window::resize(x, y, w, h);
 
   if (resizing) {
-    remoteResize();
+    if (scalingMode != "None") {
+      // Rescale the remote image to the new window size
+      applyScaling(cc->server.width(), cc->server.height());
+    } else {
+      remoteResize();
 
-    repositionWidgets();
+      repositionWidgets();
+    }
   }
 }
 
@@ -1293,6 +1321,12 @@ void DesktopWindow::remoteResize()
 
   if (!::remoteResize)
     return;
+
+  // When scaling client-side, window size changes are handled locally and
+  // we leave the remote desktop size alone.
+  if (scalingMode != "None")
+    return;
+
   if (!cc->server.supportsSetDesktopSize)
     return;
 
@@ -1451,6 +1485,40 @@ void DesktopWindow::remoteResize()
 }
 
 
+void DesktopWindow::applyScaling(int fb_w, int fb_h)
+{
+  int vp_w, vp_h;
+
+  if ((fb_w <= 0) || (fb_h <= 0))
+    return;
+
+  // The framebuffer stays at the remote desktop size; only the viewport
+  // widget is resized to scale the image.
+  viewport->resizeFramebuffer(fb_w, fb_h);
+
+  if (scalingMode == "Fill") {
+    // Stretch to fill the whole window, ignoring aspect ratio
+    vp_w = w();
+    vp_h = h();
+  } else {
+    // "Aspect": scale to fit the window while preserving aspect ratio,
+    // leaving letterbox/pillarbox borders as needed
+    double scale = std::min((double)w() / fb_w, (double)h() / fb_h);
+    vp_w = (int)(fb_w * scale + 0.5);
+    vp_h = (int)(fb_h * scale + 0.5);
+  }
+
+  if (vp_w < 1)
+    vp_w = 1;
+  if (vp_h < 1)
+    vp_h = 1;
+
+  viewport->size(vp_w, vp_h);
+
+  repositionWidgets();
+}
+
+
 void DesktopWindow::repositionWidgets()
 {
   int new_x, new_y;
@@ -1553,6 +1621,17 @@ void DesktopWindow::handleOptions(void *data)
     self->fullscreen_on();
   else if (!fullScreen && self->fullscreen_active())
     self->fullscreen_off();
+
+  // The scaling mode may have changed; apply it
+  if (scalingMode != "None") {
+    self->applyScaling(self->cc->server.width(), self->cc->server.height());
+  } else {
+    // Scaling turned off: restore the viewport to the remote desktop size
+    // (1:1, with scrollbars if the window is smaller)
+    self->viewport->size(self->cc->server.width(),
+                         self->cc->server.height());
+    self->repositionWidgets();
+  }
 }
 
 void DesktopWindow::handleFullscreenTimeout(void *data)

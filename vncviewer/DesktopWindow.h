@@ -107,6 +107,10 @@ private:
   static void reconfigureFullscreen(void *data);
   void remoteResize();
 
+  // Resize and reposition the viewport for client-side scaling, keeping
+  // the framebuffer at the given remote desktop size.
+  void applyScaling(int fb_w, int fb_h);
+
   void repositionWidgets();
 
   static void handleClose(Fl_Widget *wnd, void *data);
