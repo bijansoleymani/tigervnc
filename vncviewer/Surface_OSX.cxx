@@ -219,7 +219,12 @@ void Surface::draw(int src_x, int src_y, int src_w, int src_h,
   dev_y = (Fl_Window::current()->h() - (dst_y + dst_h)) * sy;
 
   // The source region (src_w x src_h) is scaled to fill the destination,
-  // which CoreGraphics does for us when the rects differ in size.
+  // which CoreGraphics does for us when the rects differ in size. Request
+  // the highest-quality (Lanczos-style) resampling so down/upscaling looks
+  // smooth rather than aliased; the default interpolation is much cheaper
+  // and noticeably softer. render() preserves this via its save/restore.
+  CGContextSetInterpolationQuality(fl_gc, kCGInterpolationHigh);
+
   lut = cocoa_win_color_space(Fl_Window::current());
   render(fl_gc, lut, data, kCGBlendModeCopy, 1.0,
          width(), height(), src_x, src_y, src_w, src_h,
@@ -238,6 +243,10 @@ void Surface::draw(Surface* dst, int src_x, int src_y, int src_w, int src_h,
 
   // macOS Coordinates are from bottom left, not top left
   dst_y = dst->height() - (dst_y + dst_h);
+
+  // High-quality resampling for the scaled blit (see the on-screen
+  // Surface::draw scaling overload for rationale).
+  CGContextSetInterpolationQuality(bitmap, kCGInterpolationHigh);
 
   render(bitmap, srgb, data, kCGBlendModeCopy, 1.0,
          width(), height(), src_x, src_y, src_w, src_h,
